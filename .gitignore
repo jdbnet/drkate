@@ -1,0 +1,24 @@
+# Binaries
+/drkate
+*.exe
+
+# Data and secrets
+data/
+config.yaml
+*.kubeconfig
+
+# Frontend
+web/node_modules/
+web/dist/
+embed/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Go
+vendor/

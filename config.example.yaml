@@ -1,0 +1,41 @@
+server:
+  listen: ":8080"
+  # 32+ bytes; 64 hex chars from: openssl rand -hex 32
+  session_secret: "change-me-use-openssl-rand-hex-32"
+
+storage:
+  path: ./data
+  # 32 bytes as 64 hex chars from: openssl rand -hex 32
+  encryption_key: "change-me-use-openssl-rand-hex-32"
+
+source:
+  kubeconfig: /path/to/source.kubeconfig
+  namespaces:
+    # Pick ONE mode (validated at startup):
+    #
+    # Mode A - whitelist: scrape ONLY these namespaces
+    include: ["production", "staging"]
+    #
+    # Mode B - blacklist: scrape ALL cluster namespaces EXCEPT these
+    # exclude: ["kube-system", "kube-public", "kube-node-lease", "cert-manager"]
+    #
+    # Mode C - all: scrape every namespace in the cluster
+    # all: true
+    # exclude: ["kube-system"]
+    #
+    # default_exclude: true  # auto-exclude kube-system, kube-public, kube-node-lease in blacklist/all modes
+
+dr:
+  kubeconfig: /path/to/dr.kubeconfig
+
+scrape:
+  interval: 15m
+  exclude_kinds: []
+  preserve_helm_annotations: false
+  preserve_replicas: true
+
+# Optional: use environment variables instead of inline secrets
+# server:
+#   session_secret_env: DRKATE_SESSION_SECRET
+# storage:
+#   encryption_key_env: DRKATE_ENCRYPTION_KEY
