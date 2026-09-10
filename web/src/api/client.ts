@@ -23,12 +23,18 @@ export interface User {
   role: string
 }
 
+export interface ResourceWarning {
+  code: 'storage' | 'ingress' | string
+  message: string
+}
+
 export interface NamespaceStatus {
   namespace: string
   synced: number
   drifted: number
   missing: number
   total: number
+  warningCount?: number
 }
 
 export interface OverviewResponse {
@@ -47,9 +53,12 @@ export interface ResourceStatusEntry {
   namespace: string
   kind: string
   name: string
-  status: 'synced' | 'drifted' | 'missing'
+  status: 'synced' | 'drifted' | 'missing' | 'pending'
+  drift?: string
   scrapedAt?: string
   updatedAt?: string
+  warnings?: ResourceWarning[]
+  edited?: boolean
 }
 
 export interface ResourceMeta {

@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppLayout from '@/components/AppLayout.vue'
+import ToastHost from '@/components/ToastHost.vue'
 
 const route = useRoute()
 const isPublic = computed(() => route.meta.public === true)
@@ -12,4 +13,5 @@ const isPublic = computed(() => route.meta.public === true)
     <RouterView />
   </AppLayout>
   <RouterView v-else />
+  <ToastHost />
 </template>

@@ -31,6 +31,9 @@ dr:
 scrape:
   interval: 15m
   exclude_kinds: []
+  # exclude_names:  # optional; kube-root-ca.crt and ServiceAccount/default are excluded by default
+  #   ConfigMap:
+  #     - my-noisy-configmap
   preserve_helm_annotations: false
   preserve_replicas: true
 

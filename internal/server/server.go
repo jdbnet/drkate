@@ -15,7 +15,7 @@ import (
 var staticFS embed.FS
 
 type Server struct {
-	handler *handlers.Handler
+	handler  *handlers.Handler
 	sessions *auth.SessionManager
 }
 
@@ -46,6 +46,7 @@ func (s *Server) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireOperator)
 			r.Put("/api/resources/{ns}/{kind}/{name}", s.handler.UpdateResource)
+			r.Delete("/api/resources/{ns}/{kind}/{name}/edit", s.handler.DiscardEdit)
 			r.Post("/api/scrape", s.handler.Scrape)
 			r.Post("/api/deploy", s.handler.Deploy)
 			r.Post("/api/dr/refresh", s.handler.DRRefresh)
@@ -67,6 +68,13 @@ func (s *Server) Router() http.Handler {
 			if path == "/" {
 				fileServer.ServeHTTP(w, r)
 				return
+			}
+			if path == "/favicon.ico" {
+				if _, err := sub.Open("favicon.png"); err == nil {
+					r.URL.Path = "/favicon.png"
+					fileServer.ServeHTTP(w, r)
+					return
+				}
 			}
 			if _, err := sub.Open(path[1:]); err != nil {
 				r.URL.Path = "/"

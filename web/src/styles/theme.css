@@ -18,6 +18,9 @@
 @layer base {
   :root { color-scheme: light; }
   html.dark { color-scheme: dark; }
+  html {
+    @apply antialiased;
+  }
   body {
     background-color: var(--color-canvas);
     color: #1f2328;
@@ -26,6 +29,9 @@
   html.dark body {
     background-color: var(--color-canvas-dark);
     color: #e6edf3;
+  }
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-accent) 28%, transparent);
   }
   button:not(:disabled), [role="button"] { @apply cursor-pointer; }
   button:disabled { @apply cursor-not-allowed; }
@@ -36,15 +42,26 @@
   html.dark .bg-surface { background-color: var(--color-canvas-dark); }
   .bg-surface-raised { background-color: var(--color-canvas-subtle); }
   html.dark .bg-surface-raised { background-color: var(--color-canvas-subtle-dark); }
+  .bg-surface-inset { background-color: var(--color-canvas-inset); }
+  html.dark .bg-surface-inset { background-color: var(--color-canvas-inset-dark); }
   .border-default { border-color: var(--color-border-default); }
   html.dark .border-default { border-color: var(--color-border-muted-dark); }
-  .text-muted { @apply text-neutral-500 dark:text-neutral-400; }
+  .text-muted { @apply text-neutral-600 dark:text-neutral-400; }
   .text-heading { @apply text-neutral-900 dark:text-neutral-100; }
+  .page-wrap {
+    @apply mx-auto w-full max-w-7xl;
+  }
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2;
+  }
+  html.dark .focus-ring {
+    --tw-ring-offset-color: var(--color-canvas-dark);
+  }
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-neutral-950 transition hover:bg-accent-muted disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-neutral-950 transition hover:bg-accent-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-900/25 disabled:cursor-not-allowed disabled:opacity-50;
   }
   .btn-secondary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-1.5 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50;
     border-color: var(--color-border-default);
     background-color: var(--color-canvas-subtle);
     color: #1f2328;
@@ -61,7 +78,7 @@
     background-color: var(--color-canvas-inset-dark);
   }
   .btn-ghost {
-    @apply inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-sm transition;
+    @apply inline-flex items-center justify-center rounded-lg border px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
     border-color: var(--color-border-default);
     color: #57606a;
   }
@@ -73,7 +90,7 @@
     background-color: var(--color-canvas-inset-dark);
   }
   .btn-row {
-    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50;
   }
   .btn-row-edit {
     @apply bg-accent/15 text-accent-muted hover:bg-accent/30;
@@ -81,8 +98,14 @@
   html.dark .btn-row-edit {
     @apply text-accent hover:bg-accent/20;
   }
+  .btn-row-danger {
+    @apply bg-red-600/10 text-red-700 hover:bg-red-600/20;
+  }
+  html.dark .btn-row-danger {
+    @apply bg-red-500/10 text-red-300 hover:bg-red-500/20;
+  }
   .btn-danger {
-    @apply inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex items-center justify-center rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400 disabled:cursor-not-allowed disabled:opacity-50;
   }
   .card {
     @apply rounded-xl border p-4;
@@ -104,16 +127,55 @@
     background-color: var(--color-canvas-subtle-dark);
     color: #e6edf3;
   }
-  .nav-item-active { @apply bg-accent/15 font-medium text-accent; }
-  .nav-item-inactive { @apply text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400; }
-  html.dark .nav-item-inactive:hover { background-color: var(--color-canvas-inset-dark); }
-  .badge { @apply inline-flex rounded-full px-2 py-0.5 text-xs font-medium; }
-  .badge-running { @apply bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300; }
-  .badge-stopped { @apply bg-neutral-200 text-neutral-600 dark:bg-slate-800 dark:text-slate-400; }
-  .badge-warn { @apply bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300; }
-  .badge-error { @apply bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300; }
+  .brand-mark {
+    @apply h-8 w-8 rounded-md;
+  }
+  .nav-tab {
+    @apply inline-flex h-14 -mb-px items-center border-b-2 px-3 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
+  }
+  .nav-tab-active {
+    @apply border-accent font-medium text-neutral-900 dark:text-neutral-100;
+  }
+  .nav-tab-inactive {
+    @apply border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100;
+  }
+  .filter-tab {
+    @apply rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent;
+  }
+  .filter-tab-active {
+    @apply bg-accent/10 font-medium text-accent;
+  }
+  .filter-tab-inactive {
+    @apply text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100;
+  }
+  .filter-tab-inactive:hover {
+    background-color: var(--color-canvas-inset);
+  }
+  html.dark .filter-tab-inactive:hover {
+    background-color: var(--color-canvas-inset-dark);
+  }
+  .crumb {
+    @apply inline-flex items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400;
+  }
+  .crumb a {
+    @apply hover:text-neutral-900 dark:hover:text-neutral-100;
+  }
+  .role-chip {
+    @apply rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-neutral-600 dark:text-neutral-400;
+    background-color: var(--color-canvas-inset);
+  }
+  html.dark .role-chip {
+    background-color: var(--color-canvas-inset-dark);
+  }
+  .badge { @apply inline-flex rounded-full px-2 py-0.5 text-xs font-medium capitalize; }
+  .badge-running, .badge-synced { @apply bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300; }
+  .badge-stopped, .badge-pending { @apply bg-neutral-200 text-neutral-600 dark:bg-slate-800 dark:text-slate-400; }
+  .badge-warn, .badge-drifted { @apply bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-300; }
+  .badge-error, .badge-missing { @apply bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300; }
   .table-row-hover { border-top: 1px solid var(--color-border-default); }
+  .table-row-hover:hover { background-color: var(--color-canvas-inset); }
   html.dark .table-row-hover { border-top-color: var(--color-border-muted-dark); }
+  html.dark .table-row-hover:hover { background-color: var(--color-canvas-inset-dark); }
   .table-scroll {
     @apply -mx-4 overflow-x-auto px-4;
     max-width: calc(100% + 2rem);
@@ -123,12 +185,44 @@
     @apply w-max min-w-full border-collapse text-left text-sm;
   }
   .data-table :is(th, td) {
-    @apply whitespace-nowrap pr-4 align-top last:pr-0;
+    @apply whitespace-nowrap pr-4 align-middle last:pr-0;
   }
   .data-table thead th {
-    @apply pb-2;
+    @apply pb-3 text-xs font-medium uppercase tracking-wide;
   }
   .data-table tbody td {
-    @apply py-2;
+    @apply py-3;
+  }
+  .coverage-track {
+    @apply flex h-1.5 w-24 overflow-hidden rounded-full;
+    background-color: var(--color-canvas-inset);
+  }
+  html.dark .coverage-track {
+    background-color: var(--color-canvas-inset-dark);
+  }
+  .coverage-seg {
+    @apply h-full;
+  }
+  .coverage-seg-synced { @apply bg-emerald-500; }
+  .coverage-seg-drifted { @apply bg-amber-500; }
+  .coverage-seg-missing { @apply bg-red-500; }
+  .skeleton {
+    @apply animate-pulse rounded-lg;
+    background-color: var(--color-canvas-inset);
+  }
+  html.dark .skeleton {
+    background-color: var(--color-canvas-inset-dark);
+  }
+  .empty-state {
+    @apply py-12 text-center text-sm text-neutral-600 dark:text-neutral-400;
+  }
+  .callout-warn {
+    @apply mb-4 rounded-xl border p-4 text-sm;
+    border-color: rgb(251 191 36 / 0.45);
+    background-color: rgb(245 158 11 / 0.08);
+  }
+  html.dark .callout-warn {
+    border-color: rgb(251 191 36 / 0.25);
+    background-color: rgb(245 158 11 / 0.08);
   }
 }

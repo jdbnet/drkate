@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 )
@@ -11,69 +12,36 @@ type DRStatusSnapshot struct {
 	Namespaces map[string][]ResourceStatusEntry
 }
 
-func (c *Comparator) Snapshot(ctx context.Context) (*DRStatusSnapshot, error) {
-	resources := c.store.AllMeta()
-	nsMap := make(map[string]*NamespaceStatus)
-	nsDetail := make(map[string][]ResourceStatusEntry)
-
-	for _, r := range resources {
-		ns, ok := nsMap[r.Namespace]
-		if !ok {
-			ns = &NamespaceStatus{Namespace: r.Namespace}
-			nsMap[r.Namespace] = ns
-		}
-
-		status, err := c.compareOne(ctx, r)
-		if err != nil {
-			status = StatusMissing
-		}
-
-		switch status {
-		case StatusSynced:
-			ns.Synced++
-		case StatusDrifted:
-			ns.Drifted++
-		case StatusMissing:
-			ns.Missing++
-		}
-		ns.Total++
-
-		nsDetail[r.Namespace] = append(nsDetail[r.Namespace], ResourceStatusEntry{
-			Namespace: r.Namespace,
-			Kind:      r.Kind,
-			Name:      r.Name,
-			Status:    status,
-			ScrapedAt: r.ScrapedAt.Format("2006-01-02T15:04:05Z07:00"),
-			UpdatedAt: r.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
-		})
-	}
-
-	var overview []NamespaceStatus
-	for _, ns := range nsMap {
-		overview = append(overview, *ns)
-	}
-
-	return &DRStatusSnapshot{
-		Overview:   overview,
-		Namespaces: nsDetail,
-	}, nil
-}
-
 type DrStatusCache struct {
 	comparator *Comparator
+	busy       func() bool
 	mu         sync.RWMutex
 	overview   []NamespaceStatus
 	namespaces map[string][]ResourceStatusEntry
 	comparing  bool
+	queued     bool
 	lastAt     time.Time
 	lastErr    string
 }
 
 func NewDrStatusCache(comparator *Comparator) *DrStatusCache {
-	return &DrStatusCache{
+	c := &DrStatusCache{
 		comparator: comparator,
 		namespaces: make(map[string][]ResourceStatusEntry),
 	}
+	c.HydrateFromStore()
+	return c
+}
+
+func (c *DrStatusCache) HydrateFromStore() {
+	if c.comparator == nil {
+		return
+	}
+	snap := c.comparator.Inventory()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.overview = snap.Overview
+	c.namespaces = snap.Namespaces
 }
 
 type OverviewResponse struct {
@@ -112,15 +80,15 @@ func (c *DrStatusCache) NamespaceDetail(ns string) NamespaceDetailResponse {
 	}
 }
 
-func (c *DrStatusCache) ResourceStatus(namespace, kind, name string) (ResourceStatus, bool) {
+func (c *DrStatusCache) ResourceStatus(namespace, kind, name string) (ResourceStatus, string, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	for _, e := range c.namespaces[namespace] {
 		if e.Kind == kind && e.Name == name {
-			return e.Status, true
+			return e.Status, e.Drift, true
 		}
 	}
-	return "", false
+	return "", "", false
 }
 
 func timeOrNil(t time.Time) *time.Time {
@@ -130,9 +98,30 @@ func timeOrNil(t time.Time) *time.Time {
 	return &t
 }
 
+func (c *DrStatusCache) SetBusyCheck(fn func() bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.busy = fn
+}
+
 func (c *DrStatusCache) RefreshAsync() {
+	c.kick(true)
+}
+
+func (c *DrStatusCache) refreshIfIdle() {
+	c.kick(false)
+}
+
+func (c *DrStatusCache) kick(queue bool) {
 	c.mu.Lock()
 	if c.comparing {
+		if queue {
+			c.queued = true
+		}
+		c.mu.Unlock()
+		return
+	}
+	if c.busy != nil && c.busy() {
 		c.mu.Unlock()
 		return
 	}
@@ -147,10 +136,17 @@ func (c *DrStatusCache) RefreshAsync() {
 }
 
 func (c *DrStatusCache) refresh(ctx context.Context) {
+	started := time.Now()
+	var queued bool
 	defer func() {
 		c.mu.Lock()
+		queued = c.queued
+		c.queued = false
 		c.comparing = false
 		c.mu.Unlock()
+		if queued {
+			c.RefreshAsync()
+		}
 	}()
 
 	if c.comparator == nil {
@@ -161,24 +157,34 @@ func (c *DrStatusCache) refresh(ctx context.Context) {
 	}
 
 	snap, err := c.comparator.Snapshot(ctx)
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	if err != nil {
+		c.mu.Lock()
 		c.lastErr = err.Error()
+		c.mu.Unlock()
+		log.Printf("dr compare: %v", err)
 		return
 	}
+	if err := c.comparator.PersistSnapshot(snap); err != nil {
+		log.Printf("persist dr statuses: %v", err)
+	}
+	c.mu.Lock()
 	c.lastErr = ""
 	c.overview = snap.Overview
 	c.namespaces = snap.Namespaces
 	c.lastAt = time.Now()
+	c.mu.Unlock()
+	log.Printf("dr compare: finished in %s", time.Since(started).Round(time.Millisecond))
 }
 
 func (c *DrStatusCache) StartBackgroundRefresh(interval time.Duration) {
 	c.RefreshAsync()
+	if interval <= 0 {
+		return
+	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		for range ticker.C {
-			c.RefreshAsync()
+			c.refreshIfIdle()
 		}
 	}()
 }

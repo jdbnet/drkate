@@ -56,10 +56,11 @@ type DRConfig struct {
 }
 
 type ScrapeConfig struct {
-	Interval                string   `yaml:"interval"`
-	ExcludeKinds            []string `yaml:"exclude_kinds"`
-	PreserveHelmAnnotations bool     `yaml:"preserve_helm_annotations"`
-	PreserveReplicas        bool     `yaml:"preserve_replicas"`
+	Interval                string              `yaml:"interval"`
+	ExcludeKinds            []string            `yaml:"exclude_kinds"`
+	ExcludeNames            map[string][]string `yaml:"exclude_names"`
+	PreserveHelmAnnotations bool                `yaml:"preserve_helm_annotations"`
+	PreserveReplicas        bool                `yaml:"preserve_replicas"`
 }
 
 func Load(path string) (*Config, error) {

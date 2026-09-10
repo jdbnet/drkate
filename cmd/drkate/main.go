@@ -83,14 +83,15 @@ func main() {
 	coordinator := k8s.NewScrapeCoordinator()
 	comparator := k8s.NewComparator(dr, store, sanitizer)
 	drCache := k8s.NewDrStatusCache(comparator)
-	deployer := k8s.NewDeployer(dr, store)
+	drCache.SetBusyCheck(coordinator.IsScraping)
+	deployer := k8s.NewDeployer(dr, store, sanitizer)
 
 	sessions := auth.NewSessionManager(sessionSecret)
 	h := handlers.NewHandler(userStore, sessions, store, scraper, coordinator, comparator, drCache, deployer, sanitizer)
 
 	srv := server.New(h, sessions)
 
-	drCache.StartBackgroundRefresh(60 * time.Second)
+	drCache.StartBackgroundRefresh(15 * time.Minute)
 
 	interval, err := cfg.ScrapeInterval()
 	if err != nil {
@@ -121,12 +122,15 @@ func main() {
 	if err := httpServer.Shutdown(ctx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+	if err := store.Flush(); err != nil {
+		log.Printf("flush store: %v", err)
+	}
 }
 
 func periodicScrape(interval time.Duration, coordinator *k8s.ScrapeCoordinator, scraper *k8s.Scraper, drCache *k8s.DrStatusCache) {
 	ticker := time.NewTicker(interval)
 	for range ticker.C {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		result, err := coordinator.Run(ctx, scraper)
 		cancel()
 		if err != nil {

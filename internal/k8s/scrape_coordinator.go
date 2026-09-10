@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 var ErrScrapeInProgress = errors.New("scrape in progress")
@@ -11,6 +12,7 @@ var ErrScrapeInProgress = errors.New("scrape in progress")
 type ScrapeCoordinator struct {
 	mu         sync.Mutex
 	scraping   bool
+	startedAt  time.Time
 	lastResult *ScrapeResult
 }
 
@@ -25,6 +27,7 @@ func (c *ScrapeCoordinator) Run(ctx context.Context, scraper *Scraper) (*ScrapeR
 		return nil, ErrScrapeInProgress
 	}
 	c.scraping = true
+	c.startedAt = time.Now()
 	c.mu.Unlock()
 
 	defer func() {
@@ -34,20 +37,24 @@ func (c *ScrapeCoordinator) Run(ctx context.Context, scraper *Scraper) (*ScrapeR
 	}()
 
 	result, err := scraper.Run(ctx)
-	if err != nil {
-		return nil, err
+	if result != nil {
+		c.mu.Lock()
+		c.lastResult = result
+		c.mu.Unlock()
 	}
-
-	c.mu.Lock()
-	c.lastResult = result
-	c.mu.Unlock()
-	return result, nil
+	return result, err
 }
 
 func (c *ScrapeCoordinator) IsScraping() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.scraping
+}
+
+func (c *ScrapeCoordinator) StartedAt() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.startedAt
 }
 
 func (c *ScrapeCoordinator) LastResult() *ScrapeResult {

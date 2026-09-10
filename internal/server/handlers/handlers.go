@@ -16,15 +16,15 @@ import (
 )
 
 type Handler struct {
-	Users        *auth.UserStore
-	Sessions     *auth.SessionManager
-	Store        *storage.Store
-	Scraper      *k8s.Scraper
-	Coordinator  *k8s.ScrapeCoordinator
-	Comparator   *k8s.Comparator
-	DrCache      *k8s.DrStatusCache
-	Deployer     *k8s.Deployer
-	Sanitizer    *k8s.Sanitizer
+	Users       *auth.UserStore
+	Sessions    *auth.SessionManager
+	Store       *storage.Store
+	Scraper     *k8s.Scraper
+	Coordinator *k8s.ScrapeCoordinator
+	Comparator  *k8s.Comparator
+	DrCache     *k8s.DrStatusCache
+	Deployer    *k8s.Deployer
+	Sanitizer   *k8s.Sanitizer
 
 	loginAttempts map[string][]time.Time
 	loginMu       sync.Mutex
@@ -132,6 +132,9 @@ func (h *Handler) DRStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) DRStatusNamespace(w http.ResponseWriter, r *http.Request) {
 	ns := chi.URLParam(r, "ns")
+	if h.Comparator.EnsureWarnings(ns) {
+		h.DrCache.HydrateFromStore()
+	}
 	h.JSON(w, http.StatusOK, h.DrCache.NamespaceDetail(ns))
 }
 
@@ -159,21 +162,26 @@ func (h *Handler) GetResource(w http.ResponseWriter, r *http.Request) {
 	kind := chi.URLParam(r, "kind")
 	name := chi.URLParam(r, "name")
 
-	yamlData, meta, err := h.Store.Get(ns, kind, name)
+	files, err := h.Store.GetFiles(ns, kind, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
+	meta := files.Meta
 
-	status, ok := h.DrCache.ResourceStatus(meta.Namespace, meta.Kind, meta.Name)
+	status, drift, ok := h.DrCache.ResourceStatus(meta.Namespace, meta.Kind, meta.Name)
 	if !ok {
-		status, _ = h.Comparator.CompareOne(r.Context(), meta)
+		status, drift, _ = h.Comparator.CompareOne(r.Context(), meta)
 	}
 
 	h.JSON(w, http.StatusOK, map[string]interface{}{
-		"yaml":      string(yamlData),
-		"meta":      meta,
-		"drStatus":  status,
+		"yaml":        string(files.YAML),
+		"scrapedYaml": string(files.Scraped),
+		"edited":      files.HasEdit,
+		"meta":        meta,
+		"drStatus":    status,
+		"drift":       drift,
+		"warnings":    k8s.DetectWarningsFromYAML(files.YAML),
 	})
 }
 
@@ -196,21 +204,50 @@ func (h *Handler) UpdateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, meta, err := h.Store.Get(ns, kind, name)
-	if err != nil {
+	if _, _, err := h.Store.Get(ns, kind, name); err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 
-	if err := h.Store.Save(meta, cleaned); err != nil {
+	if err := h.Store.SaveEdit(ns, kind, name, cleaned); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := h.Store.ApplyWarnings([]storage.WarningUpdate{{
+		Namespace: ns,
+		Kind:      kind,
+		Name:      name,
+		Warnings:  k8s.DetectWarningsFromYAML(cleaned),
+	}}); err != nil {
+		log.Printf("persist resource warnings: %v", err)
+	}
+	h.DrCache.HydrateFromStore()
+	h.JSON(w, http.StatusOK, map[string]string{"ok": "true"})
+}
+
+func (h *Handler) DiscardEdit(w http.ResponseWriter, r *http.Request) {
+	ns := chi.URLParam(r, "ns")
+	kind := chi.URLParam(r, "kind")
+	name := chi.URLParam(r, "name")
+	if err := h.Store.ClearEdit(ns, kind, name); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	h.DrCache.HydrateFromStore()
 	h.JSON(w, http.StatusOK, map[string]string{"ok": "true"})
 }
 
 func (h *Handler) ScrapeStatus(w http.ResponseWriter, r *http.Request) {
+	scraping := h.Coordinator.IsScraping()
 	stats := h.Store.ScrapeStats()
+	if scraping {
+		stats = h.Store.LiveStats()
+		if stats.LastScrapeAt.IsZero() {
+			if started := h.Coordinator.StartedAt(); !started.IsZero() {
+				stats.LastScrapeAt = started
+			}
+		}
+	}
 	last := h.Coordinator.LastResult()
 	var lastResult interface{} = nil
 	if last != nil {
@@ -221,7 +258,7 @@ func (h *Handler) ScrapeStatus(w http.ResponseWriter, r *http.Request) {
 		lastScrapeAt = stats.LastScrapeAt
 	}
 	h.JSON(w, http.StatusOK, map[string]interface{}{
-		"scraping":       h.Coordinator.IsScraping(),
+		"scraping":       scraping,
 		"lastScrapeAt":   lastScrapeAt,
 		"namespaceCount": stats.NamespaceCount,
 		"resourceCount":  stats.ResourceCount,
@@ -239,10 +276,13 @@ func (h *Handler) Scrape(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		_, err := h.Coordinator.Run(ctx, h.Scraper)
+		result, err := h.Coordinator.Run(ctx, h.Scraper)
 		if err != nil {
 			if !errors.Is(err, k8s.ErrScrapeInProgress) {
 				log.Printf("scrape error: %v", err)
+			}
+			if result != nil {
+				h.DrCache.RefreshAsync()
 			}
 			return
 		}
@@ -267,6 +307,12 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	if len(result.Failed) > 0 {
+		log.Printf("deploy: %d succeeded, %d failed in %s", len(result.Success), len(result.Failed), req.Namespace)
+		for _, f := range result.Failed {
+			log.Printf("deploy failed: %s", f)
+		}
 	}
 	h.JSON(w, http.StatusOK, result)
 	h.DrCache.RefreshAsync()

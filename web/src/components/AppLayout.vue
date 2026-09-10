@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
-  Menu, X, LayoutDashboard, Users, LogOut, Sun, Moon, LoaderCircle, Download,
+  Menu, X, LogOut, Sun, Moon, LoaderCircle, Download,
 } from '@lucide/vue'
 import { useAuthStore } from '@/stores/auth'
 import { applyTheme, useThemeStore } from '@/stores/theme'
@@ -14,14 +14,14 @@ const route = useRoute()
 const auth = useAuthStore()
 const theme = useThemeStore()
 const dr = useDrStore()
-const sidebarOpen = ref(false)
+const menuOpen = ref(false)
 
 const nav = computed(() => {
   const items = [
-    { to: '/', label: 'Overview', icon: LayoutDashboard, match: (p: string) => p === '/' },
+    { to: '/', label: 'Overview', match: (p: string) => p === '/' || p.startsWith('/namespace/') || p.startsWith('/resource/') },
   ]
   if (auth.me?.role === 'admin') {
-    items.push({ to: '/users', label: 'Users', icon: Users, match: (p: string) => p.startsWith('/users') })
+    items.push({ to: '/users', label: 'Users', match: (p: string) => p.startsWith('/users') })
   }
   return items
 })
@@ -33,6 +33,16 @@ const pageTitle = computed(() => {
 })
 
 const canScrape = computed(() => auth.me?.role === 'admin' || auth.me?.role === 'operator')
+
+const scrapeLabel = computed(() => {
+  if (dr.scrapeWaiting) return 'Scraping...'
+  if (dr.serverScraping) return 'Scrape running...'
+  return 'Scrape source'
+})
+
+watch(() => route.path, () => {
+  menuOpen.value = false
+})
 
 onMounted(() => {
   applyTheme(theme.dark)
@@ -49,74 +59,110 @@ async function logout() {
 
 async function scrape() {
   if (!canScrape.value || dr.scrapeBusy) return
+  menuOpen.value = false
   await dr.runScrape()
 }
 </script>
 
 <template>
-  <div class="flex h-screen overflow-hidden bg-surface">
-    <div v-if="sidebarOpen" class="fixed inset-0 z-40 bg-black/50 lg:hidden" @click="sidebarOpen = false" />
-    <aside
-      class="fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-default bg-surface-raised transition-transform lg:static lg:translate-x-0"
-      :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
-    >
-      <div class="flex items-center gap-3 border-b border-default p-4">
-        <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/20 text-sm font-bold text-accent">K8</div>
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-semibold text-heading">DrKate</div>
-          <div class="text-xs text-muted">k8s disaster recovery</div>
-        </div>
-        <button type="button" class="text-muted lg:hidden" @click="sidebarOpen = false"><X class="h-5 w-5" /></button>
-      </div>
-      <nav class="flex-1 overflow-y-auto p-2">
+  <div class="flex h-screen flex-col overflow-hidden bg-surface">
+    <header class="flex h-14 shrink-0 items-center gap-3 border-b border-default bg-surface-raised px-4 md:gap-6 md:px-8">
+      <button
+        type="button"
+        class="focus-ring rounded-lg p-1 text-muted md:hidden"
+        :aria-label="menuOpen ? 'Close menu' : 'Open menu'"
+        :aria-expanded="menuOpen"
+        @click="menuOpen = !menuOpen"
+      >
+        <X v-if="menuOpen" class="h-5 w-5" />
+        <Menu v-else class="h-5 w-5" />
+      </button>
+      <RouterLink to="/" class="focus-ring flex items-center gap-2.5 rounded-lg">
+        <img src="/favicon.png" alt="" class="brand-mark" />
+        <span class="text-sm font-semibold tracking-tight text-heading">DrKate</span>
+      </RouterLink>
+      <nav class="hidden h-full items-stretch md:flex" aria-label="Primary">
         <RouterLink
           v-for="item in nav"
           :key="item.to"
           :to="item.to"
-          class="mb-0.5 flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition"
-          :class="item.match(route.path) ? 'nav-item-active' : 'nav-item-inactive'"
-          @click="sidebarOpen = false"
+          class="nav-tab"
+          :class="item.match(route.path) ? 'nav-tab-active' : 'nav-tab-inactive'"
+          :aria-current="item.match(route.path) ? 'page' : undefined"
         >
-          <component :is="item.icon" class="h-4 w-4 shrink-0" />
           {{ item.label }}
         </RouterLink>
       </nav>
-      <div class="border-t border-default p-3 space-y-2">
+      <span class="min-w-0 truncate text-sm font-medium text-heading md:hidden">{{ pageTitle }}</span>
+      <div class="ml-auto flex items-center gap-2">
         <button
           v-if="canScrape"
           type="button"
-          class="btn-primary w-full"
+          class="btn-primary hidden sm:inline-flex"
           :disabled="dr.scrapeBusy"
           @click="scrape"
         >
           <LoaderCircle v-if="dr.scrapeBusy" class="h-4 w-4 animate-spin" />
           <Download v-else class="h-4 w-4" />
-          {{ dr.scrapeWaiting ? 'Scraping...' : dr.serverScraping ? 'Scrape running...' : 'Scrape source' }}
+          {{ scrapeLabel }}
         </button>
-        <div class="flex items-stretch gap-1.5">
-          <button type="button" class="btn-secondary shrink-0 px-2.5 py-2" @click="theme.toggle()">
-            <Sun v-if="theme.dark" class="h-4 w-4" />
-            <Moon v-else class="h-4 w-4" />
-          </button>
-          <button type="button" class="btn-secondary min-w-0 flex-1 px-2.5 py-2 text-xs" @click="logout">
-            <LogOut class="h-4 w-4 shrink-0" />
-            <span>Sign out</span>
-          </button>
+        <div v-if="auth.me" class="hidden items-center gap-2 border-l border-default pl-3 lg:flex">
+          <span class="text-sm text-heading">{{ auth.me.username }}</span>
+          <span class="role-chip">{{ auth.me.role }}</span>
         </div>
+        <button
+          type="button"
+          class="btn-secondary p-1.5"
+          :aria-label="theme.dark ? 'Switch to light theme' : 'Switch to dark theme'"
+          @click="theme.toggle()"
+        >
+          <Sun v-if="theme.dark" class="h-4 w-4" />
+          <Moon v-else class="h-4 w-4" />
+        </button>
+        <button type="button" class="btn-secondary hidden text-sm sm:inline-flex" @click="logout">
+          <LogOut class="h-4 w-4 shrink-0" />
+          Sign out
+        </button>
       </div>
-    </aside>
-    <div class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <header class="flex shrink-0 items-center gap-3 border-b border-default bg-surface-raised px-4 py-3 lg:hidden">
-        <button type="button" class="text-muted" @click="sidebarOpen = true"><Menu class="h-5 w-5" /></button>
-        <span class="truncate font-semibold text-heading">{{ pageTitle }}</span>
-      </header>
-      <main class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 md:p-6 text-heading">
-        <p v-if="dr.scrapeMessage" class="mb-4 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent-muted">{{ dr.scrapeMessage }}</p>
-        <p v-if="dr.scrapeError" class="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-300">{{ dr.scrapeError }}</p>
-        <p v-if="dr.comparing" class="mb-2 text-xs text-muted">Comparing with DR cluster...</p>
-        <slot />
-      </main>
+    </header>
+
+    <div v-if="menuOpen" class="space-y-1 border-b border-default bg-surface-raised px-4 py-3 md:hidden">
+      <RouterLink
+        v-for="item in nav"
+        :key="item.to"
+        :to="item.to"
+        class="block rounded-lg px-3 py-2 text-sm"
+        :class="item.match(route.path) ? 'bg-accent/15 font-medium text-accent' : 'text-muted'"
+        :aria-current="item.match(route.path) ? 'page' : undefined"
+      >
+        {{ item.label }}
+      </RouterLink>
+      <div v-if="auth.me" class="flex items-center gap-2 px-3 pt-2 text-sm">
+        <span class="text-heading">{{ auth.me.username }}</span>
+        <span class="role-chip">{{ auth.me.role }}</span>
+      </div>
+      <button
+        v-if="canScrape"
+        type="button"
+        class="btn-primary mt-2 w-full"
+        :disabled="dr.scrapeBusy"
+        @click="scrape"
+      >
+        <LoaderCircle v-if="dr.scrapeBusy" class="h-4 w-4 animate-spin" />
+        <Download v-else class="h-4 w-4" />
+        {{ scrapeLabel }}
+      </button>
+      <button type="button" class="btn-secondary mt-1 w-full" @click="logout">
+        <LogOut class="h-4 w-4 shrink-0" />
+        Sign out
+      </button>
     </div>
+
+    <main class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 text-heading md:p-8">
+      <div class="page-wrap">
+        <slot />
+      </div>
+    </main>
     <ConfirmDialog />
   </div>
 </template>

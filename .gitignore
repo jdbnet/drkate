@@ -1,6 +1,7 @@
 # Binaries
 /drkate
 *.exe
+/dist/
 
 # Data and secrets
 data/
@@ -11,6 +12,8 @@ config.yaml
 web/node_modules/
 web/dist/
 embed/
+internal/server/static/assets/
+internal/server/static/index.html
 
 # IDE
 .idea/

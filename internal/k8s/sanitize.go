@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jamie/drkate/internal/config"
@@ -14,25 +15,40 @@ var defaultExcludedKinds = map[string]bool{
 	"Event":              true,
 	"Binding":            true,
 	"Endpoints":          true,
+	"EndpointSlice":      true,
+	"PodMetrics":         true,
+	"NodeMetrics":        true,
 	"ReplicaSet":         true,
 	"Pod":                true,
 	"ControllerRevision": true,
+	"Lease":              true,
+}
+
+var defaultExcludedNames = map[string]map[string]bool{
+	"ConfigMap": {
+		"kube-root-ca.crt": true,
+	},
+	"ServiceAccount": {
+		"default": true,
+	},
 }
 
 var annotationExactStrip = map[string]bool{
 	"kubectl.kubernetes.io/last-applied-configuration": true,
 	"deployment.kubernetes.io/revision":                true,
 	"kubernetes.io/change-cause":                       true,
+	"kubernetes.io/ingress.class":                      true,
 }
 
 var annotationPrefixStrip = []string{
 	"kubectl.kubernetes.io/",
 	"banzaicloud.com/",
+	"field.cattle.io/",
 }
 
 var labelExactStrip = map[string]bool{
-	"pod-template-hash":              true,
-	"controller-revision-hash":       true,
+	"pod-template-hash":                true,
+	"controller-revision-hash":         true,
 	"batch.kubernetes.io/job-tracking": true,
 }
 
@@ -51,6 +67,7 @@ var metadataFieldsStrip = []string{
 
 type Sanitizer struct {
 	excludeKinds            map[string]bool
+	excludeNames            map[string]map[string]bool
 	preserveHelmAnnotations bool
 	preserveReplicas        bool
 }
@@ -63,8 +80,29 @@ func NewSanitizer(cfg config.ScrapeConfig) *Sanitizer {
 	for _, k := range cfg.ExcludeKinds {
 		excluded[k] = true
 	}
+
+	excludedNames := make(map[string]map[string]bool)
+	for kind, names := range defaultExcludedNames {
+		m := make(map[string]bool, len(names))
+		for name := range names {
+			m[name] = true
+		}
+		excludedNames[kind] = m
+	}
+	for kind, names := range cfg.ExcludeNames {
+		m, ok := excludedNames[kind]
+		if !ok {
+			m = make(map[string]bool)
+			excludedNames[kind] = m
+		}
+		for _, name := range names {
+			m[name] = true
+		}
+	}
+
 	return &Sanitizer{
 		excludeKinds:            excluded,
+		excludeNames:            excludedNames,
 		preserveHelmAnnotations: cfg.PreserveHelmAnnotations,
 		preserveReplicas:        cfg.PreserveReplicas,
 	}
@@ -72,6 +110,13 @@ func NewSanitizer(cfg config.ScrapeConfig) *Sanitizer {
 
 func (s *Sanitizer) IsExcludedKind(kind string) bool {
 	return s.excludeKinds[kind]
+}
+
+func (s *Sanitizer) IsExcludedResource(kind, name string) bool {
+	if names, ok := s.excludeNames[kind]; ok {
+		return names[name]
+	}
+	return false
 }
 
 func (s *Sanitizer) SanitizeObject(obj *unstructured.Unstructured) (*unstructured.Unstructured, error) {
@@ -93,10 +138,14 @@ func (s *Sanitizer) SanitizeObject(obj *unstructured.Unstructured) (*unstructure
 		s.sanitizeWorkload(u)
 	case "PersistentVolumeClaim":
 		s.sanitizePVC(u)
+	case "Ingress":
+		s.sanitizeIngress(u)
 	case "ConfigMap":
 		s.sanitizeConfigMap(u)
 	case "Secret":
 		s.sanitizeSecret(u)
+	case "ServiceAccount":
+		s.sanitizeServiceAccount(u)
 	case "Job", "CronJob":
 		s.sanitizeJob(u)
 	}
@@ -151,6 +200,10 @@ func (s *Sanitizer) stripAnnotations(ann map[string]interface{}) {
 			delete(ann, k)
 			continue
 		}
+		if strings.Contains(k, "cattle.io/") {
+			delete(ann, k)
+			continue
+		}
 		for _, prefix := range annotationPrefixStrip {
 			if strings.HasPrefix(k, prefix) {
 				delete(ann, k)
@@ -166,6 +219,10 @@ func (s *Sanitizer) stripAnnotations(ann map[string]interface{}) {
 func (s *Sanitizer) stripLabels(labels map[string]interface{}) {
 	for k := range labels {
 		if labelExactStrip[k] {
+			delete(labels, k)
+			continue
+		}
+		if strings.Contains(k, "cattle.io/") {
 			delete(labels, k)
 			continue
 		}
@@ -207,6 +264,14 @@ func (s *Sanitizer) sanitizePVC(u *unstructured.Unstructured) {
 	delete(spec, "volumeName")
 }
 
+func (s *Sanitizer) sanitizeIngress(u *unstructured.Unstructured) {
+	spec, ok := u.Object["spec"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	delete(spec, "ingressClassName")
+}
+
 func (s *Sanitizer) sanitizeConfigMap(u *unstructured.Unstructured) {
 	if bd, ok := u.Object["binaryData"].(map[string]interface{}); ok && len(bd) == 0 {
 		delete(u.Object, "binaryData")
@@ -217,6 +282,10 @@ func (s *Sanitizer) sanitizeSecret(u *unstructured.Unstructured) {
 	if t, ok := u.Object["type"].(string); ok && t == "" {
 		delete(u.Object, "type")
 	}
+}
+
+func (s *Sanitizer) sanitizeServiceAccount(u *unstructured.Unstructured) {
+	delete(u.Object, "secrets")
 }
 
 func (s *Sanitizer) sanitizeJob(u *unstructured.Unstructured) {
@@ -241,27 +310,25 @@ func (s *Sanitizer) dropEmptyMaps(m map[string]interface{}) {
 }
 
 func ToOrderedYAML(u *unstructured.Unstructured) ([]byte, error) {
+	preferred := []string{"apiVersion", "kind", "metadata", "spec", "data", "stringData", "type"}
 	ordered := make(map[string]interface{})
-	if v, ok := u.Object["apiVersion"]; ok {
-		ordered["apiVersion"] = v
+	used := make(map[string]bool, len(preferred))
+	for _, k := range preferred {
+		if v, ok := u.Object[k]; ok {
+			ordered[k] = v
+			used[k] = true
+		}
 	}
-	if v, ok := u.Object["kind"]; ok {
-		ordered["kind"] = v
+	var extra []string
+	for k := range u.Object {
+		if used[k] || k == "status" {
+			continue
+		}
+		extra = append(extra, k)
 	}
-	if v, ok := u.Object["metadata"]; ok {
-		ordered["metadata"] = v
-	}
-	if v, ok := u.Object["spec"]; ok {
-		ordered["spec"] = v
-	}
-	if v, ok := u.Object["data"]; ok {
-		ordered["data"] = v
-	}
-	if v, ok := u.Object["stringData"]; ok {
-		ordered["stringData"] = v
-	}
-	if v, ok := u.Object["type"]; ok {
-		ordered["type"] = v
+	sort.Strings(extra)
+	for _, k := range extra {
+		ordered[k] = u.Object[k]
 	}
 	return yaml.Marshal(ordered)
 }

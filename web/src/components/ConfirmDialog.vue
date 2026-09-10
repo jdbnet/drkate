@@ -20,11 +20,11 @@ onUnmounted(() => {
 <template>
   <Teleport to="body">
     <div v-if="confirmState.open" class="fixed inset-0 z-[100] flex items-center justify-center p-4">
-      <div class="absolute inset-0 bg-black/50" aria-hidden="true" @click="confirmCancel" />
+      <div class="absolute inset-0 bg-black/40 backdrop-blur-[2px]" aria-hidden="true" @click="confirmCancel" />
       <div
         role="alertdialog"
         aria-modal="true"
-        class="card relative z-10 w-full max-w-md shadow-xl"
+        class="card relative z-10 w-full max-w-md p-5"
       >
         <h2 class="text-lg font-semibold text-heading">{{ confirmState.title }}</h2>
         <p v-if="confirmState.message" class="mt-2 text-sm text-muted">{{ confirmState.message }}</p>
